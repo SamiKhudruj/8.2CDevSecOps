@@ -1,57 +1,63 @@
 pipeline {
-  agent any
-  tools { nodejs 'Node 18.x' }                 // must match your Node tool name
-  options { timestamps(); ansiColor('xterm') }
+    agent any
+    tools { nodejs 'Node 18.x' } // must match your Node tool name
+    options { timestamps(); ansiColor('xterm') }
 
-  stages {
-    stage('Checkout') {
-      steps { git branch: 'main', url: 'https://github.com/SamiKhudruj/8.2CDevSecOps.git' }
+    stages {
+        stage('Checkout') {
+            steps { git branch: 'main', url: 'https://github.com/SamiKhudruj/8.2CDevSecOps.git' }
+        }
+
+        stage('Install Dependencies') {
+            steps { sh 'npm ci || npm install' }
+        }
+
+        stage('Run Tests') {
+            steps { sh 'npm test || true' } // keep pipeline green
+        }
+
+        stage('Generate Coverage') {
+            steps {
+                sh 'mkdir -p coverage && echo "placeholder" > coverage/README.txt'
+                archiveArtifacts artifacts: 'coverage/**/*', allowEmptyArchive: true
+            }
+        }
+
+        stage('NPM Audit (Security)') {
+            steps { sh 'npm audit --audit-level=low || true' }
+        }
+
+        stage('SonarCloud Analysis') {
+            environment { SONAR_TOKEN = credentials('SONAR_TOKEN') }
+            steps {
+                sh '''
+                    set -e
+                    SCANNER_DIR="$WORKSPACE/.sonar/scanner"
+                    mkdir -p "$SCANNER_DIR"
+
+                    # download if not already installed
+                    if [ ! -x "$SCANNER_DIR/bin/sonar-scanner" ]; then
+                      URL="https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-5.0.1.3006-linux.zip"
+                      curl -sSLo scanner.zip "$URL" || wget -qO scanner.zip "$URL"
+                      unzip -q -o scanner.zip
+                      rm -f scanner.zip
+                      mv sonar-scanner-5.0.1.3006-linux/* "$SCANNER_DIR"/
+                      rm -rf sonar-scanner-5.0.1.3006-linux
+                    fi
+
+                    # ensure LCOV file exists
+                    mkdir -p coverage
+                    [ -f coverage/lcov.info ] || echo "TN:" > coverage/lcov.info
+
+                    "$SCANNER_DIR/bin/sonar-scanner"
+                '''
+            }
+        }
     }
 
-    stage('Install Dependencies') {
-      steps { sh 'npm ci || npm install' }
+    post {
+        always {
+            archiveArtifacts artifacts: 'npm-debug.log*', allowEmptyArchive: true
+        }
     }
-
-    stage('Run Tests') {
-      steps { sh 'npm test || true' }          // keep pipeline green
-    }
-
-    stage('Generate Coverage') {
-      steps {
-        sh 'mkdir -p coverage && echo "placeholder" > coverage/README.txt'
-        archiveArtifacts artifacts: 'coverage/**/*', allowEmptyArchive: true
-      }
-    }
-
-    stage('NPM Audit (Security)') {
-      steps { sh 'npm audit --audit-level=low || true' }
-    }
-
-    stage('SonarCloud Analysis') {
-      environment { SONAR_TOKEN = credentials('SONAR_TOKEN') }
-      steps {
-        sh '''
-          set -e
-          SCANNER_DIR="$WORKSPACE/.sonar/scanner"
-          if [ ! -x "$SCANNER_DIR/bin/sonar-scanner" ]; then
-            mkdir -p "$SCANNER_DIR"
-            URL="https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-5.0.1.3006-linux.zip"
-            command -v curl >/dev/null 2>&1 && curl -sSLo scanner.zip "$URL" || wget -qO scanner.zip "$URL"
-            unzip -q -o scanner.zip
-            mv sonar-scanner-* "$SCANNER_DIR"
-          fi
-
-          # ensure LCOV file exists so the path in properties resolves
-          mkdir -p coverage
-          [ -f coverage/lcov.info ] || echo "TN:" > coverage/lcov.info
-
-          "$SCANNER_DIR/bin/sonar-scanner"
-        '''
-      }
-    }
-  }
-
-  post {
-    always { archiveArtifacts artifacts: 'npm-debug.log*', allowEmptyArchive: true }
-  }
 }
